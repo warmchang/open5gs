@@ -23,9 +23,9 @@ static void handle_nf_service(
         ogs_sbi_nf_service_t *nf_service, OpenAPI_nf_service_t *NFService);
 static bool handle_smf_info(
         ogs_sbi_nf_instance_t *nf_instance, OpenAPI_smf_info_t *SmfInfo);
-static void handle_scp_info(
+static bool handle_scp_info(
         ogs_sbi_nf_instance_t *nf_instance, OpenAPI_scp_info_t *ScpInfo);
-static void handle_sepp_info(
+static bool handle_sepp_info(
         ogs_sbi_nf_instance_t *nf_instance, OpenAPI_sepp_info_t *SeppInfo);
 static bool handle_amf_info(
         ogs_sbi_nf_instance_t *nf_instance, OpenAPI_amf_info_t *AmfInfo);
@@ -251,7 +251,11 @@ bool ogs_nnrf_nfm_handle_nf_profile(
                             nf_instance,
                             NFService->service_instance_id,
                             NFService->service_name, NFService->scheme);
-            ogs_assert(nf_service);
+            if (!nf_service) {
+                ogs_error("Failed to add NFService [%s]",
+                        NFService->service_instance_id);
+                return false;
+            }
         }
 
         ogs_sbi_nf_service_clear(nf_service);
@@ -294,7 +298,11 @@ bool ogs_nnrf_nfm_handle_nf_profile(
                                 nf_instance,
                                 NFService->service_instance_id,
                                 NFService->service_name, NFService->scheme);
-                ogs_assert(nf_service);
+                if (!nf_service) {
+                    ogs_error("Failed to add NFService [%s]",
+                            NFService->service_instance_id);
+                    return false;
+                }
             }
 
             ogs_sbi_nf_service_clear(nf_service);
@@ -325,10 +333,12 @@ bool ogs_nnrf_nfm_handle_nf_profile(
                 handle_amf_info(nf_instance, AmfInfoMap->value) == false)
             return false;
     }
-    if (NFProfile->scp_info)
-        handle_scp_info(nf_instance, NFProfile->scp_info);
-    if (NFProfile->sepp_info)
-        handle_sepp_info(nf_instance, NFProfile->sepp_info);
+    if (NFProfile->scp_info &&
+            handle_scp_info(nf_instance, NFProfile->scp_info) == false)
+        return false;
+    if (NFProfile->sepp_info &&
+            handle_sepp_info(nf_instance, NFProfile->sepp_info) == false)
+        return false;
 
     return true;
 }
@@ -458,7 +468,10 @@ static bool handle_smf_info(
 
     nf_info = ogs_sbi_nf_info_add(
             &nf_instance->nf_info_list, OpenAPI_nf_type_SMF);
-    ogs_assert(nf_info);
+    if (!nf_info) {
+        ogs_error("Failed to add SMF nfInfo");
+        return false;
+    }
 
     sNssaiSmfInfoList = SmfInfo->s_nssai_smf_info_list;
     OpenAPI_list_for_each(sNssaiSmfInfoList, node) {
@@ -614,7 +627,20 @@ out:
     return true;
 }
 
-static void handle_scp_info(
+static void scp_info_free(ogs_sbi_scp_info_t *scp_info)
+{
+    int i;
+
+    ogs_assert(scp_info);
+
+    for (i = 0; i < scp_info->num_of_domain; i++) {
+        ogs_free(scp_info->domain[i].name);
+        ogs_free(scp_info->domain[i].fqdn);
+    }
+    memset(scp_info, 0, sizeof(*scp_info));
+}
+
+static bool handle_scp_info(
         ogs_sbi_nf_instance_t *nf_instance, OpenAPI_scp_info_t *ScpInfo)
 {
     ogs_sbi_nf_info_t *nf_info = NULL;
@@ -712,13 +738,19 @@ static void handle_scp_info(
         scp_info.num_of_domain) {
         nf_info = ogs_sbi_nf_info_add(
                 &nf_instance->nf_info_list, OpenAPI_nf_type_SCP);
-        ogs_assert(nf_info);
+        if (!nf_info) {
+            ogs_error("Failed to add SCP nfInfo");
+            scp_info_free(&scp_info);
+            return false;
+        }
 
         memcpy(&nf_info->scp, &scp_info, sizeof(scp_info));
     }
+
+    return true;
 }
 
-static void handle_sepp_info(
+static bool handle_sepp_info(
         ogs_sbi_nf_instance_t *nf_instance, OpenAPI_sepp_info_t *SeppInfo)
 {
     ogs_sbi_nf_info_t *nf_info = NULL;
@@ -768,7 +800,10 @@ static void handle_sepp_info(
     if (http.presence || https.presence) {
         nf_info = ogs_sbi_nf_info_add(
                 &nf_instance->nf_info_list, OpenAPI_nf_type_SEPP);
-        ogs_assert(nf_info);
+        if (!nf_info) {
+            ogs_error("Failed to add SEPP nfInfo");
+            return false;
+        }
 
         nf_info->sepp.http.presence = http.presence;
         nf_info->sepp.http.port = http.port;
@@ -776,6 +811,8 @@ static void handle_sepp_info(
         nf_info->sepp.https.presence = https.presence;
         nf_info->sepp.https.port = https.port;
     }
+
+    return true;
 }
 
 static bool handle_amf_info(
@@ -798,7 +835,10 @@ static bool handle_amf_info(
 
     nf_info = ogs_sbi_nf_info_add(
             &nf_instance->nf_info_list, OpenAPI_nf_type_AMF);
-    ogs_assert(nf_info);
+    if (!nf_info) {
+        ogs_error("Failed to add AMF nfInfo");
+        return false;
+    }
 
     nf_info->amf.amf_set_id = ogs_uint64_from_string_hexadecimal(
             AmfInfo->amf_set_id);
@@ -1204,6 +1244,7 @@ bool ogs_nnrf_nfm_handle_nf_status_notify(
             OpenAPI_notification_event_type_NF_REGISTERED) {
 
         OpenAPI_nf_profile_t *NFProfile = NULL;
+        bool nf_instance_created = false;
 
         NFProfile = NotificationData->nf_profile;
         if (!NFProfile) {
@@ -1254,6 +1295,7 @@ bool ogs_nnrf_nfm_handle_nf_status_notify(
             ogs_sbi_nf_instance_set_id(
                     nf_instance, message.h.resource.component[1]);
             ogs_sbi_nf_fsm_init(nf_instance);
+            nf_instance_created = true;
 
             ogs_info("[%s] (NRF-notify) NF registered", nf_instance->id);
         } else {
@@ -1267,7 +1309,31 @@ bool ogs_nnrf_nfm_handle_nf_status_notify(
             }
         }
 
-        ogs_nnrf_nfm_handle_nf_profile(nf_instance, NFProfile);
+        if (ogs_nnrf_nfm_handle_nf_profile(nf_instance, NFProfile) == false) {
+            ogs_error("[%s] (NRF-notify) Invalid NFProfile [type:%s]",
+                    NFProfile->nf_instance_id,
+                    OpenAPI_nf_type_ToString(NFProfile->nf_type));
+
+            /*
+             * ogs_nnrf_nfm_handle_nf_profile() rebuilds the NF profile in
+             * place. If parsing fails for a newly created cache entry, remove
+             * it because it may contain a partial profile. If the entry
+             * already existed, keep it in the registry to avoid deleting a
+             * previously usable local cache entry because of one bad notify.
+             */
+            if (nf_instance_created == true) {
+                ogs_sbi_nf_fsm_fini(nf_instance);
+                ogs_sbi_nf_instance_remove(nf_instance);
+            }
+
+            ogs_assert(true ==
+                ogs_sbi_server_send_error(
+                    stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
+                    recvmsg, "Invalid NFProfile",
+                    NFProfile->nf_instance_id, NULL));
+            ogs_sbi_header_free(&header);
+            return false;
+        }
 
         ogs_info("[%s] (NRF-notify) NF Profile updated [type:%s]",
                     nf_instance->id,
@@ -1334,6 +1400,7 @@ void ogs_nnrf_disc_handle_nf_discover_search_result(
 
     OpenAPI_list_for_each(SearchResult->nf_instances, node) {
         OpenAPI_nf_profile_t *NFProfile = NULL;
+        bool nf_instance_created = false;
 
         if (!node->data) continue;
 
@@ -1366,18 +1433,19 @@ void ogs_nnrf_disc_handle_nf_discover_search_result(
 
             ogs_sbi_nf_instance_set_id(nf_instance, NFProfile->nf_instance_id);
             ogs_sbi_nf_fsm_init(nf_instance);
+            nf_instance_created = true;
 
             ogs_info("[%s] (NRF-discover) NF registered [type:%s]",
-                    nf_instance->id,
-                    OpenAPI_nf_type_ToString(nf_instance->nf_type));
+                    NFProfile->nf_instance_id,
+                    OpenAPI_nf_type_ToString(NFProfile->nf_type));
         } else {
             ogs_warn("[%s] (NRF-discover) NF has already been added [type:%s]",
-                    nf_instance->id,
-                    OpenAPI_nf_type_ToString(nf_instance->nf_type));
+                    NFProfile->nf_instance_id,
+                    OpenAPI_nf_type_ToString(NFProfile->nf_type));
             if (!OGS_FSM_CHECK(&nf_instance->sm, ogs_sbi_nf_state_registered)) {
                 ogs_error("[%s] (NRF-notify) NF invalid state [type:%s]",
-                        nf_instance->id,
-                        OpenAPI_nf_type_ToString(nf_instance->nf_type));
+                        NFProfile->nf_instance_id,
+                        OpenAPI_nf_type_ToString(NFProfile->nf_type));
             }
         }
 
@@ -1385,8 +1453,20 @@ void ogs_nnrf_disc_handle_nf_discover_search_result(
             if (ogs_nnrf_nfm_handle_nf_profile(
                         nf_instance, NFProfile) == false) {
                 ogs_error("[%s] (NRF-discover) Invalid NFProfile [type:%s]",
-                        nf_instance->id,
+                        NFProfile->nf_instance_id,
                         OpenAPI_nf_type_ToString(NFProfile->nf_type));
+
+                /*
+                 * Do not leave a newly created partial NFProfile in the
+                 * registry. If the entry already existed, keep it to avoid
+                 * deleting a previously usable local cache entry because of
+                 * one bad discovery result.
+                 */
+                if (nf_instance_created == true) {
+                    ogs_sbi_nf_fsm_fini(nf_instance);
+                    ogs_sbi_nf_instance_remove(nf_instance);
+                }
+
                 continue;
             }
 
@@ -1413,15 +1493,15 @@ void ogs_nnrf_disc_handle_nf_discover_search_result(
             } else
                 ogs_warn("[%s] NF Instance validity-time should not 0 "
                         "[type:%s]",
-                    nf_instance->id,
+                    NFProfile->nf_instance_id,
                     nf_instance->nf_type ?
-                        OpenAPI_nf_type_ToString(nf_instance->nf_type) :
+                        OpenAPI_nf_type_ToString(NFProfile->nf_type) :
                         "NULL");
 
             ogs_info("[%s] (NF-discover) NF Profile updated "
                     "[type:%s validity:%ds]",
-                    nf_instance->id,
-                    OpenAPI_nf_type_ToString(nf_instance->nf_type),
+                    NFProfile->nf_instance_id,
+                    OpenAPI_nf_type_ToString(NFProfile->nf_type),
                     nf_instance->time.validity_duration);
         }
     }
