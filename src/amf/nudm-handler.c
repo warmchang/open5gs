@@ -56,20 +56,40 @@ int amf_nudm_sdm_handle_provisioned(
                 OpenAPI_list_for_each(gpsiList, node) {
                     if (node->data) {
                         char *gpsi = NULL;
+                        bool is_msisdn = false;
 
                         gpsi = ogs_id_get_type(node->data);
-                        if (gpsi) {
-                            if (strncmp(gpsi, OGS_ID_GPSI_TYPE_MSISDN,
-                                    strlen(OGS_ID_GPSI_TYPE_MSISDN)) == 0) {
-                                amf_ue->msisdn[amf_ue->num_of_msisdn] =
-                                    ogs_id_get_value(node->data);
-                                ogs_assert(amf_ue->
-                                        msisdn[amf_ue->num_of_msisdn]);
-
-                                amf_ue->num_of_msisdn++;
-                            }
-                            ogs_free(gpsi);
+                        if (!gpsi) {
+                            ogs_error("[%s] No type [%s]",
+                                    amf_ue->supi, (char *)node->data);
+                            continue;
                         }
+
+                        is_msisdn =
+                            (strcmp(gpsi, OGS_ID_GPSI_TYPE_MSISDN) == 0);
+                        ogs_free(gpsi);
+
+                        if (!is_msisdn) {
+                            ogs_error("[%s] Unsupported GPSI type [%s]",
+                                    amf_ue->supi, (char *)node->data);
+                            continue;
+                        }
+
+                        if (amf_ue->num_of_msisdn >= OGS_MAX_NUM_OF_MSISDN) {
+                            ogs_error("[%s] Ignore MSISDN; max %d reached",
+                                    amf_ue->supi, OGS_MAX_NUM_OF_MSISDN);
+                            break;
+                        }
+
+                        amf_ue->msisdn[amf_ue->num_of_msisdn] =
+                            ogs_id_get_value(node->data);
+                        if (!amf_ue->msisdn[amf_ue->num_of_msisdn]) {
+                            ogs_error("[%s] Invalid GPSI [%s]",
+                                    amf_ue->supi, (char *)node->data);
+                            continue;
+                        }
+
+                        amf_ue->num_of_msisdn++;
                     }
                 }
             }
@@ -96,14 +116,24 @@ int amf_nudm_sdm_handle_provisioned(
                 if (DefaultSingleNssaiList) {
                     OpenAPI_list_for_each(DefaultSingleNssaiList, node) {
                         OpenAPI_snssai_t *Snssai = node->data;
+                        ogs_slice_data_t *slice = NULL;
 
-                        ogs_slice_data_t *slice =
-                            &amf_ue->slice[amf_ue->num_of_slice];
-                        if (Snssai) {
-                            slice->s_nssai.sst = Snssai->sst;
-                            slice->s_nssai.sd =
-                                ogs_s_nssai_sd_from_string(Snssai->sd);
+                        if (!Snssai) {
+                            ogs_error("[%s] No S-NSSAI", amf_ue->supi);
+                            continue;
                         }
+
+                        if (amf_ue->num_of_slice >= OGS_MAX_NUM_OF_SLICE) {
+                            ogs_error("[%s] Ignore Default S-NSSAI; "
+                                    "max %d reached",
+                                    amf_ue->supi, OGS_MAX_NUM_OF_SLICE);
+                            break;
+                        }
+
+                        slice = &amf_ue->slice[amf_ue->num_of_slice];
+                        slice->s_nssai.sst = Snssai->sst;
+                        slice->s_nssai.sd =
+                            ogs_s_nssai_sd_from_string(Snssai->sd);
 
                         /* DEFAULT S-NSSAI */
                         slice->default_indicator = true;
@@ -115,14 +145,25 @@ int amf_nudm_sdm_handle_provisioned(
                     if (SingleNssaiList) {
                         OpenAPI_list_for_each(SingleNssaiList, node) {
                             OpenAPI_snssai_t *Snssai = node->data;
+                            ogs_slice_data_t *slice = NULL;
 
-                            ogs_slice_data_t *slice =
-                                &amf_ue->slice[amf_ue->num_of_slice];
-                            if (Snssai) {
-                                slice->s_nssai.sst = Snssai->sst;
-                                slice->s_nssai.sd =
-                                    ogs_s_nssai_sd_from_string(Snssai->sd);
+                            if (!Snssai) {
+                                ogs_error("[%s] No S-NSSAI", amf_ue->supi);
+                                continue;
                             }
+
+                            if (amf_ue->num_of_slice >=
+                                    OGS_MAX_NUM_OF_SLICE) {
+                                ogs_error("[%s] Ignore S-NSSAI; "
+                                        "max %d reached",
+                                        amf_ue->supi, OGS_MAX_NUM_OF_SLICE);
+                                break;
+                            }
+
+                            slice = &amf_ue->slice[amf_ue->num_of_slice];
+                            slice->s_nssai.sst = Snssai->sst;
+                            slice->s_nssai.sd =
+                                ogs_s_nssai_sd_from_string(Snssai->sd);
 
                             /* Non default S-NSSAI */
                             slice->default_indicator = false;
